@@ -1,6 +1,6 @@
-# APP Project
+# HILS
 
-APP[모듈명] 프로젝트
+하드웨어 시뮬레이션(Hardware in the Loops) 장치 코드
 
 ## 프로젝트 구조
 
