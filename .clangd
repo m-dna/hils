@@ -1,0 +1,8 @@
+CompileFlags:
+  Add:
+    - -IC:/Xilinx/Vitis/2022.1/gnu/aarch32/nt/gcc-arm-none-eabi/aarch32-xilinx-eabi/usr/include
+    - -I../app/include
+    - -I../comm/rtos/include
+    - -I../common/include
+    - -I../hal/include
+    - -I../rtos/include

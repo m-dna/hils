@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="ASCII"?>
-<sdkproject:SdkProject xmi:version="2.0" xmlns:xmi="http://www.omg.org/XMI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:sdkproject="http://www.xilinx.com/sdkproject" name="hils" location="C:/git/m-dna/hils" platform="C:/git/m-dna/hils_platform/export/hils_platform/hils_platform.xpfm" platformUID="xilinx:zybo-z7-10::0.0(custom)" systemProject="hils_system" sysConfig="hils_platform" runtime="cpp" cpu="freertos10_xilinx_ps7_cortexa9_0" cpuInstance="ps7_cortexa9_0" os="freertos10_xilinx" language="CPP" mssSignature="98ba311b5c0f4a54ecc30baa3e07e8cd">
-  <configuration name="Debug" id="xilinx.gnu.armv7.exe.debug.1890078491" dirty="true">
+<sdkproject:SdkProject xmi:version="2.0" xmlns:xmi="http://www.omg.org/XMI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:sdkproject="http://www.xilinx.com/sdkproject" name="hils" location="C:/git/m-dna/hils" platform="C:/git/m-dna/hils_project/export/hils_project/hils_project.xpfm" platformUID="xilinx:zybo-z7-10::0.0(custom)" systemProject="hils_system" sysConfig="hils_project" runtime="cpp" cpu="freertos10_xilinx_domain" cpuInstance="ps7_cortexa9_0" os="freertos10_xilinx" dimmRepoPath="" language="CPP" mssSignature="33e55ccaba4b74e3fd9c1bd4211aa7e6">
+  <configuration name="Debug" id="xilinx.gnu.armv7.exe.debug.1890078491">
     <configBuildOptions xsi:type="sdkproject:SdkOptions"/>
+    <lastBuildOptions xsi:type="sdkproject:SdkOptions"/>
   </configuration>
   <configuration name="Release" id="xilinx.gnu.armv7.exe.release.925217324" dirty="true">
     <configBuildOptions xsi:type="sdkproject:SdkOptions"/>
