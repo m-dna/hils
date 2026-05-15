@@ -1,7 +1,7 @@
 [
   {
     "directory": "C:/git/m-dna/hils/Debug",
-    "command": "arm-none-eabi-g++ -Wall -O0 -g3 -c -fmessage-length=0 -mcpu=cortex-a9 -mfpu=vfpv3 -mfloat-abi=hard -IC:/git/m-dna/hils_project/export/hils_project/sw/hils_project/freertos10_xilinx_domain/bspinclude/include ../src/main.cpp",
+    "command": "C:/Xilinx/Vitis/2022.1/gnu/aarch32/nt/gcc-arm-none-eabi/bin/arm-none-eabi-g++.exe -Wall -O0 -g3 -c -fmessage-length=0 -mcpu=cortex-a9 -mfpu=vfpv3 -mfloat-abi=hard  -IC:/git/m-dna/gimbal_v8/export/gimbal_v8/sw/gimbal_v8/freertos10_xilinx_domain/bspinclude/include ../src/main.cpp",
     "file": "../src/main.cpp"
   }
 ]

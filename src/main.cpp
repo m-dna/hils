@@ -1,28 +1,16 @@
-/*
-    Copyright (C) 2017 Amazon.com, Inc. or its affiliates.  All Rights Reserved.
-    Copyright (c) 2012 - 2022 Xilinx, Inc. All Rights Reserved.
-        SPDX-License-Identifier: MIT
+#include <stdlib.h>
+#include <string.h>
 
-
-    http://www.FreeRTOS.org
-    http://aws.amazon.com/freertos
-
-
-    1 tab == 4 spaces!
-*/
-
-/* FreeRTOS includes. */
 #include <cstdint>
 
 #include "FreeRTOS.h"
-#include "dto/common_parameter.h"
-#include "enum/icd_id.h"
+#include "communication.hpp"
+#include "enum/device_id.h"
+#include "interface_communication.hpp"
+#include "projdefs.h"
 #include "queue.h"
 #include "task.h"
-#include "timers.h"
-/* Xilinx includes. */
-// #include "my_task.h"
-// #include "status_task.h"
+#include "xgpio.h"
 #include "xil_printf.h"
 #include "xparameters.h"
 
@@ -30,231 +18,256 @@
 #define DELAY_10_SECONDS 10000UL
 #define DELAY_1_SECOND 1000UL
 #define TIMER_CHECK_THRESHOLD 9
-/*-----------------------------------------------------------*/
 
-/* The Tx and Rx tasks as described at the top of this file. */
-static void prvTxTask(void* pvParameters);
-static void prvRxTask(void* pvParameters);
-static void vTimerCallback(TimerHandle_t pxTimer);
-/*-----------------------------------------------------------*/
+// ─────────────────────────────────────────
+// 상수 & 타입 정의
+// ─────────────────────────────────────────
+namespace ServoConfig {
+constexpr int SERVO_MIN_US = 700;   // 더 좁게
+constexpr int SERVO_MAX_US = 1100;  // 더 좁게
+constexpr int CLK_MHZ = 100;
+constexpr int ANGLE_MIN = 0;
+constexpr int ANGLE_MAX = 180;
+constexpr int ANGLE_DEFAULT = 90;
+constexpr int GPIO_CH1 = 1;  // yaw
+constexpr int GPIO_CH2 = 2;  // pitch
+}  // namespace ServoConfig
 
-/* The queue used by the Tx and Rx tasks, as described at the top of this
-file. */
-static TaskHandle_t xTxTask;
-static TaskHandle_t xRxTask;
-static QueueHandle_t xQueue = NULL;
-static TimerHandle_t xTimer = NULL;
-char HWstring[15] = "Hello World";
-long RxtaskCntr = 0;
+enum class CmdType : uint8_t {
+  NULL_CMD,
+  YAW_INC,
+  YAW_DEC,
+  PITCH_INC,
+  PITCH_DEC,
+  YAW_ABS,
+  PITCH_ABS,
+};
 
-#if (configSUPPORT_STATIC_ALLOCATION == 1)
-#define QUEUE_BUFFER_SIZE 100
+struct ServoCmd {
+  CmdType type = CmdType::NULL_CMD;
+  int value = 0;
+};
 
-uint8_t ucQueueStorageArea[QUEUE_BUFFER_SIZE];
-StackType_t xStack1[configMINIMAL_STACK_SIZE];
-StackType_t xStack2[configMINIMAL_STACK_SIZE];
-StaticTask_t xTxBuffer, xRxBuffer;
-StaticTimer_t xTimerBuffer;
-static StaticQueue_t xStaticQueue;
-#endif
-
-#include "communication.hpp"
-#include "enum/device_id.h"
-#include "interface_communication.hpp"
-#include "task.h"
+static QueueHandle_t xCmdQueue = nullptr;
 
 Network::ICommunication* i_communication = nullptr;
 
-void receive_callback(IcdId id, void* data, size_t len) {
-  xil_printf("Received data with ICD ID: %d, length: %d\r\n",
-             static_cast<int>(id), len);
-  CommonParameter* param = static_cast<CommonParameter*>(data);
-  xil_printf("id : %d\r\n", param->message_id);
-  xil_printf("volt : %d\r\n", param->mcu_voltage);
-  xil_printf("cpu_temp : %d\r\n", param->cpu_temperature);
-  xil_printf("cpu_usage : %d\r\n", param->cpu_usage);
-  xil_printf("heap_usage : %d\r\n", param->heap_usage);
+void receive_callback(IcdId id, uint8_t* data, size_t len) {
+  IcdId icd_id = static_cast<IcdId>((data[0] << 8) | data[1]);
+  xil_printf("Received data with ICD ID: %d, length: %d\r\n", icd_id, len);
 }
 
-void status_task(void* pvParameters) {
-  CommonParameter common_parameter = {
-      .message_id = static_cast<uint16_t>(IcdId::COMMON_PARAMETER),
-      .mcu_voltage = 130,
-      .cpu_temperature = 70,
-      .cpu_usage = 50,
-      .heap_usage = 30};
-  while (1) {
-    xil_printf("Status Task Running...\r\n");
-    i_communication->send_dto(DeviceId::UI, &common_parameter,
-                              sizeof(CommonParameter));
-    vTaskDelay(pdMS_TO_TICKS(1000));  // 1초마다 상태 출력
+// ─────────────────────────────────────────
+// 유틸
+// ─────────────────────────────────────────
+static int clamp(int val, int lo, int hi) {
+  if (val < lo) return lo;
+  if (val > hi) return hi;
+  return val;
+}
+
+static uint32_t angle_to_duty(int angle) {
+  angle = clamp(angle, ServoConfig::ANGLE_MIN, ServoConfig::ANGLE_MAX);
+  uint32_t us = ServoConfig::SERVO_MIN_US +
+                (ServoConfig::SERVO_MAX_US - ServoConfig::SERVO_MIN_US) *
+                    angle / ServoConfig::ANGLE_MAX;
+  return us * ServoConfig::CLK_MHZ;
+}
+
+static void print_usage() {
+  xil_printf("\r\n");
+  xil_printf("┌─────────────────────────────────┐\r\n");
+  xil_printf("│       Servo Control Help         │\r\n");
+  xil_printf("├──────────────┬──────────────────┤\r\n");
+  xil_printf("│  w           │ pitch +1도        │\r\n");
+  xil_printf("│  s           │ pitch -1도        │\r\n");
+  xil_printf("│  d           │ yaw   +1도        │\r\n");
+  xil_printf("│  a           │ yaw   -1도        │\r\n");
+  xil_printf("├──────────────┼──────────────────┤\r\n");
+  xil_printf("│  l + [숫자]  │ yaw  +N도 (절대)  │\r\n");
+  xil_printf("│  h + [숫자]  │ yaw  -N도 (절대)  │\r\n");
+  xil_printf("│  k + [숫자]  │ pitch +N도 (절대) │\r\n");
+  xil_printf("│  j + [숫자]  │ pitch -N도 (절대) │\r\n");
+  xil_printf("└──────────────┴──────────────────┘\r\n");
+  xil_printf("\r\n");
+}
+
+// ─────────────────────────────────────────
+// Task 1: UART 수신 → Queue 전송
+// ─────────────────────────────────────────
+void uart_rx_task(void* pvParameters) {
+  char pending = 0;
+
+  print_usage();
+
+  while (true) {
+    char c = inbyte();
+    outbyte(c);
+    ServoCmd cmd{};
+    bool enqueue = true;
+
+    if (pending) {
+      char num_buf[4] = {0};
+      int idx = 0;
+      char nc = c;
+
+      while (nc >= '0' && nc <= '9' && idx < 3) {
+        num_buf[idx++] = nc;
+        outbyte(nc);
+        nc = inbyte();
+      }
+
+      outbyte('\r');
+      outbyte('\n');
+
+      const int angle = atoi(num_buf);
+
+      switch (pending) {
+        case 'l':
+          cmd = {CmdType::YAW_ABS, angle};
+          break;
+        case 'h':
+          cmd = {CmdType::YAW_ABS, -angle};
+          break;
+        case 'k':
+          cmd = {CmdType::PITCH_ABS, angle};
+          break;
+        case 'j':
+          cmd = {CmdType::PITCH_ABS, -angle};
+          break;
+        default:
+          enqueue = false;
+          break;
+      }
+      pending = 0;
+
+    } else {
+      switch (c) {
+        case 'w':
+          cmd = {CmdType::PITCH_INC, 1};
+          break;
+        case 's':
+          cmd = {CmdType::PITCH_DEC, 1};
+          break;
+        case 'd':
+          cmd = {CmdType::YAW_INC, 1};
+          break;
+        case 'a':
+          cmd = {CmdType::YAW_DEC, 1};
+          break;
+        case 'h':
+        case 'j':
+        case 'k':
+        case 'l':
+          pending = c;
+          xil_printf("angle> ");
+          enqueue = false;
+          break;
+        case '?':
+          print_usage();
+          enqueue = false;
+          break;
+        default:
+          enqueue = false;
+          break;
+      }
+    }
+
+    if (enqueue && xCmdQueue) {
+      xQueueSend(xCmdQueue, &cmd, 0);
+    }
+  }
+}
+
+// 상수 추가
+namespace LedConfig {
+constexpr int GPIO_CH = 1;
+constexpr uint32_t ALL_ON = 0xF;  // LD0~LD3 전부 ON
+constexpr uint32_t ALL_OFF = 0x0;
+}  // namespace LedConfig
+
+// ─────────────────────────────────────────
+// Task 2: Queue 수신 → GPIO 업데이트
+// ─────────────────────────────────────────
+void servo_ctrl_task(void* pvParameters) {
+  XGpio gpio{};
+  XGpio gpio_led{};  // ← LED용
+
+  xil_printf("init servo");
+  XGpio_Initialize(&gpio, XPAR_AXI_GPIO_0_DEVICE_ID);
+  XGpio_SetDataDirection(&gpio, ServoConfig::GPIO_CH1, 0);  // CH1 = yaw
+  XGpio_SetDataDirection(&gpio, ServoConfig::GPIO_CH2, 0);  // CH2 = pitch
+
+  int yaw = ServoConfig::ANGLE_DEFAULT;
+  int pitch = ServoConfig::ANGLE_DEFAULT;
+
+  XGpio_DiscreteWrite(&gpio, ServoConfig::GPIO_CH1, angle_to_duty(yaw));
+  XGpio_DiscreteWrite(&gpio, ServoConfig::GPIO_CH2, angle_to_duty(pitch));
+
+  xil_printf("[Servo] Initialized. yaw=%d pitch=%d\r\n", yaw, pitch);
+
+  ServoCmd cmd{};
+
+  while (true) {
+    if (xQueueReceive(xCmdQueue, &cmd, portMAX_DELAY) != pdTRUE) continue;
+
+    switch (cmd.type) {
+      case CmdType::YAW_INC:
+        yaw += cmd.value;
+        break;
+      case CmdType::YAW_DEC:
+        yaw -= cmd.value;
+        break;
+      case CmdType::PITCH_INC:
+        pitch += cmd.value;
+        break;
+      case CmdType::PITCH_DEC:
+        pitch -= cmd.value;
+        break;
+      case CmdType::YAW_ABS:
+        yaw = cmd.value;
+        break;
+      case CmdType::PITCH_ABS:
+        pitch = cmd.value;
+        break;
+      default:
+        break;
+    }
+
+    yaw = clamp(yaw, ServoConfig::ANGLE_MIN, ServoConfig::ANGLE_MAX);
+    pitch = clamp(pitch, ServoConfig::ANGLE_MIN, ServoConfig::ANGLE_MAX);
+
+    XGpio_DiscreteWrite(&gpio, ServoConfig::GPIO_CH1, angle_to_duty(yaw));
+    XGpio_DiscreteWrite(&gpio, ServoConfig::GPIO_CH2, angle_to_duty(pitch));
+
+    xil_printf("[Servo] yaw: %3d deg  |  pitch: %3d deg\r\n", yaw, pitch);
+    print_usage();
   }
 }
 
 #define THREAD_STACKSIZE 1024
 int main(void) {
-  const TickType_t x10seconds = pdMS_TO_TICKS(DELAY_10_SECONDS);
-
-  Network::Communication communication = {DeviceId::ACT, receive_callback};
+  Network::Communication communication{};
   i_communication = &communication;
-  communication.object_init();
+  communication.object_init(DeviceId::HILS);
+  communication.register_callback(receive_callback);
 
-  xTaskCreate(status_task, /* The function that implements the task. */
-              (const char*)"Status",    /* Text name for the task, provided to
-                                       assist    debugging only. */
-              configMINIMAL_STACK_SIZE, /* The stack allocated to the task. */
-              NULL, /* The task parameter is not used, so set to NULL. */
-              tskIDLE_PRIORITY, /* The task runs at the idle priority. */
-              &xTxTask);
+  xil_printf("Hello Hils\r\n");
 
-#if (configSUPPORT_STATIC_ALLOCATION == 0) /* Normal or standard use case */
-  /* Create the two tasks.  The Tx task is given a lower priority than the
-  Rx task, so the Rx task will leave the Blocked state and pre-empt the Tx
-  task as soon as the Tx task places an item in the queue. */
-  xTaskCreate(prvTxTask,         /* The function that implements the task. */
-              (const char*)"Tx", /* Text name for the task, provided to assist
-                                    debugging only. */
-              configMINIMAL_STACK_SIZE, /* The stack allocated to the task. */
-              NULL, /* The task parameter is not used, so set to NULL. */
-              tskIDLE_PRIORITY, /* The task runs at the idle priority. */
-              &xTxTask);
+  xCmdQueue = xQueueCreate(64, sizeof(ServoCmd));
+  configASSERT(xCmdQueue != nullptr);
 
-  xTaskCreate(prvRxTask, (const char*)"GB", configMINIMAL_STACK_SIZE, NULL,
-              tskIDLE_PRIORITY + 1, &xRxTask);
-  //  xTaskCreate(status_task, (const char *)"Status",
-  //  configMINIMAL_STACK_SIZE,
-  //              NULL, tskIDLE_PRIORITY + 1, NULL);
+  BaseType_t r1 = xTaskCreate(uart_rx_task, "UART_RX", 2048, nullptr,
+                              tskIDLE_PRIORITY + 1, nullptr);
+  BaseType_t r2 = xTaskCreate(servo_ctrl_task, "SERVO", 8192, nullptr,
+                              tskIDLE_PRIORITY + 1, nullptr);
 
-  /* Create the queue used by the tasks.  The Rx task has a higher priority
-  than the Tx task, so will preempt the Tx task and remove values from the
-  queue as soon as the Tx task writes to the queue - therefore the queue can
-  never have more than one item in it. */
-  xQueue = xQueueCreate(1, /* There is only one space in the queue. */
-                        sizeof(HWstring)); /* Each space in the queue is large
-                                              enough to hold a uint32_t. */
+  xil_printf("Task create: uart=%d servo=%d\r\n", r1, r2);
+  xil_printf("Starting scheduler...\r\n");
 
-  /* Check the queue was created. */
-  configASSERT(xQueue);
-
-  /* Create a timer with a timer expiry of 10 seconds. The timer would expire
-   after 10 seconds and the timer call back would get called. In the timer
-   call back checks are done to ensure that the tasks have been running
-   properly till then. The tasks are deleted in the timer call back and a
-   message is printed to convey that the example has run successfully. The
-   timer expiry is set to 10 seconds and the timer set to not auto reload. */
-  xTimer = xTimerCreate((const char*)"Timer", x10seconds, pdFALSE,
-                        (void*)TIMER_ID, vTimerCallback);
-  /* Check the timer was created. */
-  configASSERT(xTimer);
-
-#else /* Use case where memories for tasks/queues/timers etc are provided \
-         statically by the users */
-  xil_printf("Using static memory for tasks, queue and timer creations. \r\n");
-  xTxTask = xTaskCreateStatic(
-      prvTxTask,                /* The function that implements the task. */
-      (const char*)"Tx",        /* Text name for the task, provided to assist
-                                   debugging only. */
-      configMINIMAL_STACK_SIZE, /* The stack allocated to the task. */
-      (void*)NULL,      /* The task parameter is not used, so set to NULL. */
-      tskIDLE_PRIORITY, /* The task runs at the idle priority. */
-      xStack1,          /* Array to use the task's stack  */
-      &xTxBuffer);      /* variable to hold the task data structure */
-  xRxTask =
-      xTaskCreateStatic(prvRxTask, (const char*)"Rx", configMINIMAL_STACK_SIZE,
-                        (void*)NULL, tskIDLE_PRIORITY + 1, xStack2, &xRxBuffer);
-
-  xQueue = xQueueCreateStatic(
-      1,                  /* Number of items in the queue. */
-      sizeof(HWstring),   /*size for each item to be stored in queue */
-      ucQueueStorageArea, /* Buffer to store the queue items*/
-      &xStaticQueue);     /* Each space in the queue is large enough to hold a 1
-                             byte. */
-  /* Check the queue was created. */
-  configASSERT(xQueue);
-  xTimer = xTimerCreateStatic((const char*)"Timer", x10seconds, pdFALSE,
-                              (void*)TIMER_ID, vTimerCallback, &xTimerBuffer);
-  /* Check the timer was created. */
-  configASSERT(xTimer);
-
-#endif
-
-  /* start the timer with a block time of 0 ticks. This means as soon
-     as the schedule starts the timer will start running and will expire after
-     10 seconds */
-  xTimerStart(xTimer, 0);
-
-  //  xTaskCreate(status_task,              // 실행할 함수
-  //              (const char *)"Status",   // 디버그용 이름
-  //              configMINIMAL_STACK_SIZE, // 스택 크기
-  //              NULL,                     // 파라미터 (안 씀)
-  //              tskIDLE_PRIORITY + 1,     // 우선순위
-  //              NULL);                    // 핸들 (안 받을 거면 NULL)
-
-  /* Start the tasks and timer running. */
   vTaskStartScheduler();
 
-  /* If all is well, the scheduler will now be running, and the following line
-  will never be reached.  If the following line does execute, then there was
-  insufficient FreeRTOS heap memory available for the idle and/or timer tasks
-  to be created.  See the memory management section on the FreeRTOS web site
-  for more details. */
-  for (;;);
-}
+  while (true);
 
-/*-----------------------------------------------------------*/
-static void prvTxTask(void* pvParameters) {
-  const TickType_t x1second = pdMS_TO_TICKS(DELAY_1_SECOND);
-
-  for (;;) {
-    /* Delay for 1 second. */
-    vTaskDelay(x1second);
-
-    /* Send the next value on the queue.  The queue should always be
-    empty at this point so a block time of 0 is used. */
-    xQueueSend(xQueue,   /* The queue being written to. */
-               HWstring, /* The address of the data being sent. */
-               0UL);     /* The block time. */
-  }
-}
-
-/*-----------------------------------------------------------*/
-static void prvRxTask(void* pvParameters) {
-  char Recdstring[15] = "";
-
-  for (;;) {
-    /* Block to wait for data arriving on the queue. */
-    xQueueReceive(xQueue,         /* The queue being read. */
-                  Recdstring,     /* Data is read into this address. */
-                  portMAX_DELAY); /* Wait without a timeout for data. */
-
-    /* Print the received data. */
-    xil_printf("Rx task received string from Tx task: %s\r\n", Recdstring);
-    RxtaskCntr++;
-  }
-}
-
-/*-----------------------------------------------------------*/
-static void vTimerCallback(TimerHandle_t pxTimer) {
-  long lTimerId;
-  configASSERT(pxTimer);
-
-  lTimerId = (long)pvTimerGetTimerID(pxTimer);
-
-  if (lTimerId != TIMER_ID) {
-    xil_printf("FreeRTOS Hello World Example FAILED");
-  }
-
-  /* If the RxtaskCntr is updated every time the Rx task is called. The
-   Rx task is called every time the Tx task sends a message. The Tx task
-   sends a message every 1 second.
-   The timer expires after 10 seconds. We expect the RxtaskCntr to at least
-   have a value of 9 (TIMER_CHECK_THRESHOLD) when the timer expires. */
-  if (RxtaskCntr >= TIMER_CHECK_THRESHOLD) {
-    xil_printf("Successfully ran FreeRTOS Hello World Example");
-  } else {
-    xil_printf("FreeRTOS Hello World Example FAILED");
-  }
-
-  vTaskDelete(xRxTask);
-  vTaskDelete(xTxTask);
+  return 0;
 }

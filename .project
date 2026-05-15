@@ -3,7 +3,7 @@
 	<name>hils</name>
 	<comment>Created by Vitis v2022.1</comment>
 	<projects>
-		<project>hils_project</project>
+		<project>gimbal_v9</project>
 	</projects>
 	<buildSpec>
 		<buildCommand>
