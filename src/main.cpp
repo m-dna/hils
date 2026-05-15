@@ -5,6 +5,7 @@
 
 #include "FreeRTOS.h"
 #include "communication.hpp"
+#include "dto/hils_rotate_command.h"
 #include "enum/device_id.h"
 #include "interface_communication.hpp"
 #include "projdefs.h"
@@ -23,8 +24,8 @@
 // 상수 & 타입 정의
 // ─────────────────────────────────────────
 namespace ServoConfig {
-constexpr int SERVO_MIN_US = 700;   // 더 좁게
-constexpr int SERVO_MAX_US = 1100;  // 더 좁게
+constexpr int SERVO_MIN_US = 500;
+constexpr int SERVO_MAX_US = 2500;
 constexpr int CLK_MHZ = 100;
 constexpr int ANGLE_MIN = 0;
 constexpr int ANGLE_MAX = 180;
@@ -52,9 +53,30 @@ static QueueHandle_t xCmdQueue = nullptr;
 
 Network::ICommunication* i_communication = nullptr;
 
+void command_received(const HilsRotateCommand* command) {
+  ServoCmd yaw_cmd{};
+  yaw_cmd.type = CmdType::YAW_ABS;
+  yaw_cmd.value = command->yaw_theta / 1000;
+
+  ServoCmd pitch_cmd{};
+  pitch_cmd.type = CmdType::PITCH_ABS;
+  pitch_cmd.value = command->pitch_theta / 1000;
+
+  xQueueSend(xCmdQueue, &yaw_cmd, 0);
+  xQueueSend(xCmdQueue, &pitch_cmd, 0);
+}
+
 void receive_callback(IcdId id, uint8_t* data, size_t len) {
-  IcdId icd_id = static_cast<IcdId>((data[0] << 8) | data[1]);
-  xil_printf("Received data with ICD ID: %d, length: %d\r\n", icd_id, len);
+  IcdId icd_id = static_cast<IcdId>((data[1] << 8) | data[0]);
+  xil_printf("Received data with ICD ID: 0x%04X, length: %d\r\n", icd_id, len);
+
+  switch (icd_id) {
+    case IcdId::HILS_ROTATE_COMMAND:
+      command_received(reinterpret_cast<const HilsRotateCommand*>(data));
+      return;
+    default:
+      xil_printf("unimplemented icd id : 0x%04X", icd_id);
+  }
 }
 
 // ─────────────────────────────────────────
@@ -77,17 +99,17 @@ static uint32_t angle_to_duty(int angle) {
 static void print_usage() {
   xil_printf("\r\n");
   xil_printf("┌─────────────────────────────────┐\r\n");
-  xil_printf("│       Servo Control Help         │\r\n");
+  xil_printf("│       Servo Control Help        │\r\n");
   xil_printf("├──────────────┬──────────────────┤\r\n");
-  xil_printf("│  w           │ pitch +1도        │\r\n");
-  xil_printf("│  s           │ pitch -1도        │\r\n");
-  xil_printf("│  d           │ yaw   +1도        │\r\n");
-  xil_printf("│  a           │ yaw   -1도        │\r\n");
+  xil_printf("│  w           │ pitch +1도       │\r\n");
+  xil_printf("│  s           │ pitch -1도       │\r\n");
+  xil_printf("│  d           │ yaw   +1도       │\r\n");
+  xil_printf("│  a           │ yaw   -1도       │\r\n");
   xil_printf("├──────────────┼──────────────────┤\r\n");
-  xil_printf("│  l + [숫자]  │ yaw  +N도 (절대)  │\r\n");
-  xil_printf("│  h + [숫자]  │ yaw  -N도 (절대)  │\r\n");
-  xil_printf("│  k + [숫자]  │ pitch +N도 (절대) │\r\n");
-  xil_printf("│  j + [숫자]  │ pitch -N도 (절대) │\r\n");
+  xil_printf("│  l + [숫자]  │ yaw  +N도 (절대) │\r\n");
+  xil_printf("│  h + [숫자]  │ yaw  -N도 (절대) │\r\n");
+  xil_printf("│  k + [숫자]  │ pitch +N도 (절대)│\r\n");
+  xil_printf("│  j + [숫자]  │ pitch -N도 (절대)│\r\n");
   xil_printf("└──────────────┴──────────────────┘\r\n");
   xil_printf("\r\n");
 }
