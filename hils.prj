@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="ASCII"?>
-<sdkproject:SdkProject xmi:version="2.0" xmlns:xmi="http://www.omg.org/XMI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:sdkproject="http://www.xilinx.com/sdkproject" name="hils" location="C:/git/m-dna/hils" platform="C:/git/m-dna/gimbal_v9/export/gimbal_v9/gimbal_v9.xpfm" platformUID="xilinx:zybo-z7-10::0.0(custom)" systemProject="hils_system" sysConfig="gimbal_v9" runtime="cpp" cpu="freertos10_xilinx_domain" cpuInstance="ps7_cortexa9_0" os="freertos10_xilinx" dimmRepoPath="" language="CPP" mssSignature="8e729f82b7f87e205bc4ca3cd76c7c52">
+<sdkproject:SdkProject xmi:version="2.0" xmlns:xmi="http://www.omg.org/XMI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:sdkproject="http://www.xilinx.com/sdkproject" name="hils" location="C:/git/m-dna/hils" platform="C:/git/m-dna/gimbal_v10/export/gimbal_v10/gimbal_v10.xpfm" platformUID="xilinx:zybo-z7-10::0.0(custom)" systemProject="hils_system" sysConfig="gimbal_v10" runtime="cpp" cpu="freertos10_xilinx_domain" cpuInstance="ps7_cortexa9_0" os="freertos10_xilinx" dimmRepoPath="" language="CPP" mssSignature="85c17eb0d8da858ac74b0368af1461e0">
   <configuration name="Debug" id="xilinx.gnu.armv7.exe.debug.1890078491">
     <configBuildOptions xsi:type="sdkproject:SdkOptions"/>
     <lastBuildOptions xsi:type="sdkproject:SdkOptions"/>
